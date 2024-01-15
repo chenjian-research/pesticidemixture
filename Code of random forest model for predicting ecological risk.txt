@@ -1,0 +1,157 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from itertools import cycle
+plt.rcParams['figure.figsize']=(25, 10)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_curve, auc
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import label_binarize, LabelEncoder
+from sklearn.multiclass import OneVsRestClassifier 
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import confusion_matrix
+from sklearn.datasets import make_classification
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import GridSearchCV
+from scipy import interp
+
+# read data
+dataset=pd.read_csv(r'D:\1work\1 PhD\RFpesticide\ecorisk4.csv')
+cols=['Risk_level','risklevel']
+for col in cols:
+    dataset[col] = dataset[col].astype('category')
+
+# Splitting the dataset into the training set and test set
+X=dataset.drop(['Risk_level','risklevel'],axis=1)
+Type=dataset.Risk_level
+X_train,X_test,y_train,y_test=train_test_split(X,Type,test_size=0.2,random_state=50,stratify=Type)
+
+# handling missing data in the trainset
+X_train.fillna(0,inplace=True)
+X_test.fillna(0,inplace=True)
+
+skf = StratifiedKFold(n_splits=10)
+# choose the best n_estimators
+scorel = []
+for i in range(1,500,1):
+    rfc1 = RandomForestClassifier(n_estimators=i, n_jobs=-1, random_state=80)
+    score = cross_val_score(rfc1, X_train, y_train, cv=skf).mean()
+    scorel.append(score)
+print(max(scorel),(scorel.index(max(scorel))))
+plt.figure(figsize=[20,5])
+plt.plot(range(1,500,1),scorel)
+plt.show()# best n_estimators=371
+
+# choose the best max_depth
+param_grid = {'max_depth':np.arange(1,30,1)} 
+rfc1 = RandomForestClassifier(n_estimators=371,random_state=80) 
+GS = GridSearchCV(rfc1,param_grid,cv=skf)
+GS.fit(X_train,y_train)
+GS.best_params_# best max_depth=14
+GS.best_score_
+#chose the best min_samples_leaf
+param_grid={'min_samples_leaf':np.arange(1, 11, 1)}
+rfc = RandomForestClassifier(n_estimators=371,random_state=80, max_depth=14)
+GS = GridSearchCV(rfc,param_grid,cv=skf)
+GS.fit(X_train,y_train)
+GS.best_params_#best min_samples_leaf=1
+GS.best_score_
+#chose the best min_samples_split
+param_grid={'min_samples_split':np.arange(2, 2+20, 1)}
+rfc = RandomForestClassifier(n_estimators=371,random_state=80, max_depth=14,min_samples_leaf=1)
+GS = GridSearchCV(rfc,param_grid,cv=skf)
+GS.fit(X_train,y_train)
+GS.best_params_#best min_samples_split=2
+GS.best_score_
+#chose the best max_features
+param_grid = {'max_features':np.arange(1,10,1)} 
+rfc = RandomForestClassifier(n_estimators=371,random_state=80, max_depth=14,min_samples_leaf=1,min_samples_split=2)
+GS = GridSearchCV(rfc,param_grid,cv=skf)
+GS.fit(X_train,y_train)
+GS.best_params_#best max_features=4
+GS.best_score_
+#chose the best criterion
+param_grid = {'criterion':['gini', 'entropy']}
+rfc = RandomForestClassifier(n_estimators=371,random_state=80, max_depth=14,min_samples_leaf=1,min_samples_split=2,max_features=4)
+GS = GridSearchCV(rfc,param_grid,cv=10)
+GS.fit(X_train,y_train)
+GS.best_params_#best criterion='gini'
+GS.best_score_
+# feature importance
+from matplotlib import pyplot as plt
+rfc = RandomForestClassifier(n_estimators=371,random_state=80, max_depth=14,min_samples_leaf=1,min_samples_split=2,max_features=4,criterion='gini')
+rfc.fit(X_train,y_train)
+sorted_idx=rfc.feature_importances_.argsort()
+plt.barh(X_train.columns[sorted_idx],rfc.feature_importances_[sorted_idx])
+
+#calculation of AUC
+X=dataset.drop(['Risk_level','risklevel'],axis=1)
+Type=dataset.Risk_level
+y = label_binarize(Type, classes=[1, 2, 3, 4])
+n_classes = y.shape[1]
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2,random_state=50,stratify=y)
+# handling missing data in the trainset
+X_train.fillna(0,inplace=True)
+X_test.fillna(0,inplace=True)
+rfc_onevsall = OneVsRestClassifier(RandomForestClassifier(n_estimators=371,random_state=80, max_depth=14,min_samples_leaf=1,min_samples_split=2,max_features=4,criterion='gini'))
+y_score = rfc_onevsall.fit(X_train, y_train).predict_proba(X_test)
+fpr = {}
+tpr = {}
+roc_auc1 = {}
+for i in range(n_classes):
+    fpr[i], tpr[i], thresholds = roc_curve(y_test[:, i], y_score[:, i])
+    roc_auc1[i] = auc(fpr[i], tpr[i])
+
+# ROC curve and AUC
+fpr["micro"], tpr["micro"], _ = roc_curve(y_test.ravel(), y_score.ravel())
+roc_auc1["micro"] = auc(fpr["micro"], tpr["micro"])
+
+# ROC curve and AUC
+all_fpr = np.unique(np.concatenate([fpr[i] for i in range(n_classes)]))
+mean_tpr = np.zeros_like(all_fpr)
+for i in range(n_classes):
+    mean_tpr += interp(all_fpr, fpr[i], tpr[i])
+mean_tpr = mean_tpr/n_classes
+fpr["macro"] = all_fpr
+tpr["macro"] = mean_tpr
+roc_auc1["macro"] = auc(fpr["macro"], tpr["macro"])
+
+# Plot all ROC curves
+lw=2
+plt.figure()
+plt.plot(fpr["micro"], tpr["micro"],
+         label='micro-average ROC curve (area = {0:0.2f})'
+               ''.format(roc_auc1["micro"]),
+         color='deeppink', linestyle=':', linewidth=4)
+
+plt.plot(fpr["macro"], tpr["macro"],
+         label='macro-average ROC curve (area = {0:0.2f})'
+               ''.format(roc_auc1["macro"]),
+         color='navy', linestyle=':', linewidth=4)
+
+colors = cycle(['orange','yellow', 'mediumblue', 'cyan'])
+hash = ['norisk', 'lowrisk', 'moderaterisk', 'highrisk']
+for i, color in zip(range(n_classes), colors):
+    plt.plot(fpr[i], tpr[i], color=color, lw=lw,
+             label='ROC curve of class {0} (area = {1:0.2f})'
+             ''.format(hash[i], roc_auc1[i]))
+
+fontsize=12
+plt.plot([0, 1], [0, 1], 'k--', lw=lw)
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.rcParams['figure.figsize']=(10,10)
+plt.xlabel('False Positive Rate', fontsize=fontsize)
+plt.ylabel('True Positive Rate', fontsize=fontsize)
+plt.title('Some extension of Receiver operating characteristic to multi-class', fontsize=fontsize)
+plt.legend(loc="lower right", fontsize=fontsize)
+plt.tight_layout()
+plt.subplots_adjust(top=0.88)
+plt.savefig('AUCplt.png',bbox_inches='tight',dpi=1000)
